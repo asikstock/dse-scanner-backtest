@@ -58,6 +58,17 @@ export const LiveStockScannerTab: React.FC<LiveStockScannerTabProps> = ({
 
       // Tab filter logic
       switch (activeTabKey) {
+        case '__realistic_screened': {
+          const isLiquid = s.val === undefined || s.val === null || s.val >= 0.5;
+          const dev = s.dev !== undefined && s.dev !== null ? s.dev : 0;
+          const isAtNormalBase = dev >= -5.5 && dev <= 4.5;
+          const chg = s.ch || 0;
+          const isCalmCandle = chg >= -2.5 && chg <= 3.8;
+          const hasBuyerFlow = (s.pbuy || 0) >= 20 && (s.pbuy || 0) >= (s.psell || 0);
+          const isValidPhase = s.p === 'Phase C' || s.p === 'Phase D' || s.p === 'Re-accumulation' || s.p === 'Phase B' || s.ok;
+          const isNotDead = s.p !== 'Distribution' && s.p !== 'Markdown' && s.p !== 'Phase A' && s.pst !== 'sell' && !s.gn && !s.lk && (!s.idle || s.idle === 0);
+          return isLiquid && isAtNormalBase && isCalmCandle && hasBuyerFlow && isValidPhase && isNotDead;
+        }
         case '__prime':
           return (s.p === 'Phase C' || s.p === 'Phase D') && s.pst === 'buy' && !s.gn;
         case '__setup':

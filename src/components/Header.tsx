@@ -8,7 +8,8 @@ import {
   Database, 
   Sparkles,
   Printer,
-  Crosshair
+  Crosshair,
+  ShieldCheck
 } from 'lucide-react';
 import { LiveMarketSummary } from '../types/scanner';
 
@@ -123,7 +124,19 @@ export const Header: React.FC<HeaderProps> = ({
             }`}
           >
             <Crosshair className="w-4 h-4 text-emerald-400" />
-            <span>🔬 কোয়ান্ট অডিট ও বাস্তবসম্মত ব্যাকটেস্ট</span>
+            <span>🔬 কোয়ান্ট অডিট ও ব্যাকটেস্ট</span>
+          </button>
+
+          <button
+            onClick={() => setActiveView('live_stocks')}
+            className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${
+              activeView === 'live_stocks'
+                ? 'bg-emerald-600 text-white shadow-md shadow-emerald-500/25 ring-1 ring-emerald-400'
+                : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/40 border border-emerald-500/40'
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-300" />
+            <span>🛡️ সংশোধিত স্টক তালিকা (লাইভ)</span>
           </button>
 
           <button

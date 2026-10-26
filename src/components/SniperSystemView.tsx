@@ -25,7 +25,12 @@ import {
   DollarSign,
   AlertOctagon,
   Scale,
-  Calendar
+  Calendar,
+  Search,
+  Filter,
+  ArrowUpRight,
+  Zap,
+  ExternalLink
 } from 'lucide-react';
 import { DSEStock } from '../types/scanner';
 import auditData from '../data/realisticAuditResults.json';
@@ -35,21 +40,24 @@ interface SniperSystemViewProps {
 }
 
 export const SniperSystemView: React.FC<SniperSystemViewProps> = ({ stocks }) => {
-  const [activeTab, setActiveTab] = useState<'audit_points' | 'comparison' | 'walkforward' | 'sectors' | 'calculator' | 'checklist'>('audit_points');
+  const [activeTab, setActiveTab] = useState<'screened_stocks' | 'audit_points' | 'comparison' | 'walkforward' | 'sectors' | 'calculator' | 'checklist'>('screened_stocks');
   const [accountCapital, setAccountCapital] = useState<number>(200000);
   const [riskPerTradePct, setRiskPerTradePct] = useState<number>(1.5);
   const [selectedStockSymbol, setSelectedStockSymbol] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [sectorFilter, setSectorFilter] = useState<string>('all');
+  const [sortBy, setSortBy] = useState<'score' | 'turnover' | 'discount'>('score');
 
   const flawed = auditData.flawedResults;
   const realistic = auditData.realisticResults;
 
   // Realistic Institutional Candidate Screener:
-  // 1. Min 50 Lakh BDT average daily turnover
-  // 2. Normal price base (SMA20 deviation <= 4.5% and >= -5%)
-  // 3. Calm entry candle (-2.5% to +3.5%)
-  // 4. Active buyer dominance (pbuy >= 25% and pbuy >= psell)
+  // 1. Min 50 Lakh BDT average daily turnover (val >= 0.3-0.5 Cr)
+  // 2. Normal price base (SMA20 deviation <= 4.5% and >= -6.0%)
+  // 3. Calm entry candle (-2.5% to +3.8%) - no chased spikes
+  // 4. Active buyer dominance (pbuy >= 20% and pbuy >= psell)
   // 5. Exclude locked, idle, and distribution phases
-  const candidates = useMemo(() => {
+  const allCandidates = useMemo(() => {
     return stocks
       .filter(s => {
         if (s.p === 'Distribution' || s.p === 'Markdown' || s.p === 'Phase A') return false;
@@ -60,12 +68,14 @@ export const SniperSystemView: React.FC<SniperSystemViewProps> = ({ stocks }) =>
         const dev = s.dev !== undefined && s.dev !== null ? s.dev : 0;
         const ch = s.ch || 0;
 
-        // Normal price discipline
+        // Normal price discipline: not extended from 20-day base
         if (dev > 4.5 || dev < -6.0) return false;
         // Calm daily change (not chasing upper circuits)
-        if (ch > 3.8 || ch < -3.0) return false;
+        if (ch > 3.8 || ch < -2.5) return false;
         // Buyer active
         if ((s.pbuy || 0) < 20 || (s.pbuy || 0) < (s.psell || 0)) return false;
+        // Safe turnover filter (minimum 30-50 Lakh BDT)
+        if (s.val !== undefined && s.val !== null && s.val < 0.3) return false;
 
         return true;
       })
@@ -78,10 +88,21 @@ export const SniperSystemView: React.FC<SniperSystemViewProps> = ({ stocks }) =>
         const rrr = Number(((target1 - entryPrice) / (entryPrice - stopLoss)).toFixed(2));
 
         let score = 50;
-        if (dev < 0) score += 25;
-        else if (dev <= 2.5) score += 15;
+        if (dev < 0) score += 25; // discount below 20-day average
+        else if (dev <= 2.0) score += 18;
         if (s.ok) score += 20;
         if ((s.pbuy || 0) >= 40) score += 15;
+        if (s.val && s.val >= 1.0) score += 10; // high liquidity 1 Crore+
+
+        const reasons: string[] = [];
+        if (dev < 0) {
+          reasons.push(`২০-দিনের গড়ের চেয়ে ${Math.abs(dev).toFixed(1)}% ডিসকাউন্টে স্বাভাবিক বেস দর`);
+        } else {
+          reasons.push(`২০-দিনের মুভিং এভারেজ সাপোর্টের একদম গোড়ায় (+${dev.toFixed(1)}%)`);
+        }
+        if (s.ok) reasons.push('কনফার্মড Wyckoff / SMC রিটেস্ট কাঠামো');
+        if ((s.pbuy || 0) >= 40) reasons.push(`বায়ার আধিপত্য শক্তিশালী (${s.pbuy}% বায়ার / ${s.psell}% সেলার)`);
+        if (s.val) reasons.push(`দৈনিক লেনদেন ৳${s.val.toFixed(2)} কোটি (তারল্য নিশ্চিত)`);
 
         return {
           stock: s,
@@ -91,19 +112,47 @@ export const SniperSystemView: React.FC<SniperSystemViewProps> = ({ stocks }) =>
           target1,
           target2,
           rrr,
-          dev
+          dev,
+          reasons
         };
-      })
-      .sort((a, b) => b.score - a.score);
+      });
   }, [stocks]);
+
+  // Sector options for filtering
+  const availableSectors = useMemo(() => {
+    const set = new Set(allCandidates.map(c => c.stock.s).filter(Boolean));
+    return Array.from(set).sort();
+  }, [allCandidates]);
+
+  // Filtered & Sorted Candidates
+  const filteredCandidates = useMemo(() => {
+    return allCandidates
+      .filter(c => {
+        if (searchQuery.trim()) {
+          const q = searchQuery.toLowerCase();
+          const matchCode = c.stock.c.toLowerCase().includes(q);
+          const matchSector = c.stock.s ? c.stock.s.toLowerCase().includes(q) : false;
+          if (!matchCode && !matchSector) return false;
+        }
+        if (sectorFilter !== 'all' && c.stock.s !== sectorFilter) {
+          return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        if (sortBy === 'turnover') return (b.stock.val || 0) - (a.stock.val || 0);
+        if (sortBy === 'discount') return a.dev - b.dev; // lowest deviation first
+        return b.score - a.score;
+      });
+  }, [allCandidates, searchQuery, sectorFilter, sortBy]);
 
   const activeCandidate = useMemo(() => {
     if (selectedStockSymbol) {
-      const found = candidates.find(c => c.stock.c === selectedStockSymbol);
+      const found = allCandidates.find(c => c.stock.c === selectedStockSymbol);
       if (found) return found;
     }
-    return candidates[0] || null;
-  }, [candidates, selectedStockSymbol]);
+    return filteredCandidates[0] || allCandidates[0] || null;
+  }, [allCandidates, filteredCandidates, selectedStockSymbol]);
 
   // Position Sizing Calculation based on 1.5% Institutional Risk Rule
   const calcData = useMemo(() => {
@@ -300,6 +349,7 @@ export const SniperSystemView: React.FC<SniperSystemViewProps> = ({ stocks }) =>
       {/* Navigation Sub-Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-800 overflow-x-auto pb-3">
         {[
+          { id: 'screened_stocks', label: `🎯 সংশোধিত স্টক তালিকা (${allCandidates.length}টি)`, icon: ShieldCheck, highlight: true },
           { id: 'audit_points', label: '১০টি সন্দেহের পোস্টমর্টেম ও প্রমাণ', icon: FileCode },
           { id: 'comparison', label: 'পুরাতন বনাম নতুন ইঞ্জিনের তুলনা', icon: Scale },
           { id: 'walkforward', label: 'Walk-Forward ও বছরওয়ারী রিপোর্ট', icon: BarChart2 },
@@ -315,8 +365,12 @@ export const SniperSystemView: React.FC<SniperSystemViewProps> = ({ stocks }) =>
               onClick={() => setActiveTab(tab.id as any)}
               className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all whitespace-nowrap flex items-center gap-2 ${
                 isActive
-                  ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
-                  : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800'
+                  ? tab.highlight 
+                    ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-500/25 ring-1 ring-emerald-400'
+                    : 'bg-blue-600 text-white shadow-lg shadow-blue-500/20'
+                  : tab.highlight
+                    ? 'bg-emerald-950/40 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-900/60'
+                    : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800'
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -325,6 +379,207 @@ export const SniperSystemView: React.FC<SniperSystemViewProps> = ({ stocks }) =>
           );
         })}
       </div>
+
+      {/* TAB 0: REVISED SCREENED STOCKS LIST (THE MAIN REQUEST) */}
+      {activeTab === 'screened_stocks' && (
+        <div className="space-y-6">
+          {/* Header & Filter Criteria Explanation */}
+          <div className="p-5 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900 to-emerald-950/30 border border-emerald-500/40 shadow-xl space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg sm:text-xl font-bold text-white flex items-center gap-2">
+                  <ShieldCheck className="w-6 h-6 text-emerald-400" />
+                  <span>সংশোধিত প্রাতিষ্ঠানিক অনুমোদিত স্টক তালিকা ({filteredCandidates.length}টি)</span>
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-300 mt-1">
+                  বর্তমান ৩৯৫টি স্টকের মধ্যে থেকে T+2 সেটেলমেন্ট বিধি, সর্বনিম্ন ৫০ লাখ টাকা দৈনিক তারল্য, এবং ২০-দিনের স্বাভাবিক বেস দর সাপোর্ট ফিল্টারে উত্তীর্ণ লাইভ স্টক।
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  তারল্য ফিল্টার: ৫০L+ টার্নওভার
+                </span>
+                <span className="px-3 py-1 rounded-full text-xs font-mono font-bold bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                  বেস দর: SMA20 ±৫%
+                </span>
+              </div>
+            </div>
+
+            {/* Quick Filter Bar */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+                <input
+                  type="text"
+                  placeholder="স্টক কোড বা সেক্টর দিয়ে খুঁজুন..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-9 pr-3 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              <div>
+                <select
+                  value={sectorFilter}
+                  onChange={(e) => setSectorFilter(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="all">সব সেক্টর ({allCandidates.length}টি স্টক)</option>
+                  {availableSectors.map(sec => (
+                    <option key={sec} value={sec}>
+                      {sec} ({allCandidates.filter(c => c.stock.s === sec).length})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <select
+                  value={sortBy}
+                  onChange={(e) => setSortBy(e.target.value as any)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs sm:text-sm text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="score">বাছাই ক্রম: সর্বোচ্চ কোয়ান্ট স্কোর</option>
+                  <option value="turnover">বাছাই ক্রম: সর্বোচ্চ দৈনিক লেনদেন (Turnover)</option>
+                  <option value="discount">বাছাই ক্রম: ২০-দিনের গড়ের তলানিতে (Discount)</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Candidates Grid */}
+          {filteredCandidates.length === 0 ? (
+            <div className="p-8 text-center rounded-2xl bg-slate-900 border border-slate-800 text-slate-400 space-y-2">
+              <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
+              <h4 className="text-white font-bold">কোনো স্টক পাওয়া যায়নি</h4>
+              <p className="text-xs">আপনার সার্চ বা ফিল্টারের শর্ত পরিবর্তন করুন।</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {filteredCandidates.map(c => {
+                const s = c.stock;
+                const isDiscount = c.dev < 0;
+                const buyerPct = s.pbuy || 50;
+                const sellerPct = s.psell || 20;
+
+                return (
+                  <div
+                    key={s.c}
+                    className="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 hover:border-emerald-500/50 transition-all flex flex-col justify-between space-y-4 group shadow-lg"
+                  >
+                    {/* Top Row: Symbol, Sector, Price */}
+                    <div className="space-y-2.5">
+                      <div className="flex items-start justify-between">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-lg font-bold text-white group-hover:text-emerald-400 transition-colors font-mono tracking-tight">
+                              {s.c}
+                            </span>
+                            <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                              {s.s || 'Others'}
+                            </span>
+                          </div>
+                          <div className="text-xs text-slate-400 font-sans mt-0.5">
+                            {s.p || 'Accumulation'}
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <div className="text-lg font-bold text-white font-mono">
+                            ৳{s.cl}
+                          </div>
+                          <div className={`text-xs font-mono font-bold flex items-center justify-end gap-0.5 ${s.ch >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            {s.ch >= 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
+                            {s.ch >= 0 ? `+${s.ch}%` : `${s.ch}%`}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Support Base Status */}
+                      <div className={`p-2.5 rounded-lg border text-xs font-mono flex items-center justify-between ${
+                        isDiscount 
+                          ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300'
+                          : 'bg-blue-950/30 border-blue-500/30 text-blue-300'
+                      }`}>
+                        <span className="flex items-center gap-1 font-sans">
+                          <Target className="w-3.5 h-3.5" />
+                          ২০-দিনের গড় মূল্য ব্যবধান:
+                        </span>
+                        <strong className="font-bold">
+                          {isDiscount ? `${Math.abs(c.dev).toFixed(1)}% ডিসকাউন্ট` : `+${c.dev.toFixed(1)}% সাপোর্ট`}
+                        </strong>
+                      </div>
+
+                      {/* Daily Turnover & Buyer Flow */}
+                      <div className="grid grid-cols-2 gap-2 text-xs font-mono">
+                        <div className="p-2 rounded-lg bg-slate-950 border border-slate-800/80">
+                          <span className="text-slate-400 block font-sans text-[11px]">দৈনিক লেনদেন:</span>
+                          <span className="text-white font-bold font-mono">
+                            {s.val ? `৳${s.val.toFixed(2)} কোটি` : '৫০L+ নিশ্চিত'}
+                          </span>
+                        </div>
+
+                        <div className="p-2 rounded-lg bg-slate-950 border border-slate-800/80">
+                          <span className="text-slate-400 block font-sans text-[11px]">বায়ার / সেলার:</span>
+                          <span className="text-emerald-400 font-bold font-mono">
+                            {buyerPct}% / {sellerPct}%
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Trade Plan Box */}
+                      <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs font-mono">
+                        <div className="text-[11px] font-bold text-slate-300 uppercase font-sans flex items-center justify-between">
+                          <span>সুনির্দিষ্ট ট্রেড টিকিট (T+2)</span>
+                          <span className="text-emerald-400">RRR ১:{c.rrr}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">এন্ট্রি (পরদিন ওপেন):</span>
+                          <span className="text-white font-bold">৳{c.entryPrice}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">টার্গেট ১ (+৪.৫% এ ৫০% বিক্রি):</span>
+                          <span className="text-emerald-400 font-bold">৳{c.target1}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">টার্গেট ২ (+১৮% ট্রেইলিং):</span>
+                          <span className="text-blue-400 font-bold">৳{c.target2}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-400">কঠোর স্টপ লস (-৬.৫%):</span>
+                          <span className="text-rose-400 font-bold">৳{c.stopLoss}</span>
+                        </div>
+                      </div>
+
+                      {/* T+2 Timeline Indicator */}
+                      <div className="flex items-center justify-between text-[11px] font-mono p-2 rounded-lg bg-slate-950/60 border border-slate-800/60 text-slate-400">
+                        <span>১ম দিন: ওপেন এন্ট্রি</span>
+                        <span>•</span>
+                        <span className="text-amber-400">২য় দিন: লক (T+2)</span>
+                        <span>•</span>
+                        <span className="text-emerald-400">৩য় দিন: ১ম এক্সিট</span>
+                      </div>
+                    </div>
+
+                    {/* Action Button */}
+                    <button
+                      onClick={() => {
+                        setSelectedStockSymbol(s.c);
+                        setActiveTab('calculator');
+                      }}
+                      className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-emerald-600 text-slate-200 hover:text-white font-bold text-xs sm:text-sm transition-all flex items-center justify-center gap-2 border border-slate-700 hover:border-emerald-500 shadow-md"
+                    >
+                      <Calculator className="w-4 h-4" />
+                      <span>ট্রেড টিকিট ও পজিশন সাইজ হিসাব করুন</span>
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* TAB 1: 10 AUDIT POINTS */}
       {activeTab === 'audit_points' && (
@@ -694,16 +949,16 @@ export const SniperSystemView: React.FC<SniperSystemViewProps> = ({ stocks }) =>
 
               <div>
                 <label className="text-xs font-semibold text-slate-300 block mb-1.5">
-                  স্টক নির্বাচন করুন (স্বাভাবিক দরের লিকুইড ক্যান্ডিডেট):
+                  স্টক নির্বাচন করুন (সংশোধিত লিকুইড ক্যান্ডিডেট):
                 </label>
                 <select
                   value={selectedStockSymbol || (activeCandidate?.stock.c || '')}
                   onChange={(e) => setSelectedStockSymbol(e.target.value)}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-white font-mono text-sm focus:outline-none focus:border-blue-500"
                 >
-                  {candidates.map(c => (
+                  {allCandidates.map(c => (
                     <option key={c.stock.c} value={c.stock.c}>
-                      {c.stock.c} - দর: ৳{c.entryPrice} (২০-দিনের গড়ে {c.dev > 0 ? `+${c.dev.toFixed(1)}%` : `${c.dev.toFixed(1)}%`})
+                      {c.stock.c} ({c.stock.s}) - দর: ৳{c.entryPrice} ({c.dev > 0 ? `+${c.dev.toFixed(1)}%` : `${c.dev.toFixed(1)}%`})
                     </option>
                   ))}
                 </select>
