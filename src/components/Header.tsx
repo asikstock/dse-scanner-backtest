@@ -118,12 +118,12 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => setActiveView('sniper')}
             className={`px-3.5 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all whitespace-nowrap flex items-center gap-1.5 ${
               activeView === 'sniper'
-                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-500/25 ring-1 ring-emerald-400'
-                : 'text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/40 border border-emerald-500/30'
+                ? 'bg-gradient-to-r from-blue-600 via-indigo-600 to-emerald-600 text-white shadow-md shadow-blue-500/25 ring-1 ring-blue-400'
+                : 'text-indigo-300 hover:text-white hover:bg-slate-800 border border-indigo-500/40'
             }`}
           >
-            <Crosshair className="w-4 h-4 text-emerald-300" />
-            <span>🎯 স্নাইপার ৮০–৯০% উইন ইঞ্জিন</span>
+            <Crosshair className="w-4 h-4 text-emerald-400" />
+            <span>🔬 কোয়ান্ট অডিট ও বাস্তবসম্মত ব্যাকটেস্ট</span>
           </button>
 
           <button
